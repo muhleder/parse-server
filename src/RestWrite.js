@@ -44,7 +44,7 @@ function RestWrite(
   this.className = className;
   this.clientSDK = clientSDK;
   this.storage = {};
-  this.runOptions = {};
+  this.runOptions = {upsert: true};
   this.context = {};
 
   if (!query) {
