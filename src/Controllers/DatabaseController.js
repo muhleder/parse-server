@@ -663,17 +663,7 @@ class DatabaseController {
                 update = transformObjectACL(update);
                 transformAuthData(className, update, schema);
                 if (validateOnly) {
-                  return this.adapter
-                    .find(className, schema, query, {})
-                    .then(result => {
-                      if (!result || !result.length) {
-                        throw new Parse.Error(
-                          Parse.Error.OBJECT_NOT_FOUND,
-                          'Object not found.'
-                        );
-                      }
-                      return {};
-                    });
+                  return {};
                 }
                 if (many) {
                   return this.adapter.updateObjectsByQuery(
