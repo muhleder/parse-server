@@ -553,9 +553,10 @@ class DatabaseController {
     className: string,
     object: any,
     query: any,
-    { acl }: QueryOptions
+    runOptions: QueryOptions
   ): Promise<boolean> {
     let schema;
+    const acl = runOptions.acl;
     const isMaster = acl === undefined;
     var aclGroup: string[] = acl || [];
     return this.loadSchema()
@@ -564,7 +565,13 @@ class DatabaseController {
         if (isMaster) {
           return Promise.resolve();
         }
-        return this.canAddField(schema, className, object, aclGroup);
+        return this.canAddField(
+          schema,
+          className,
+          object,
+          aclGroup,
+          runOptions
+        );
       })
       .then(() => {
         return schema.validateObject(className, object, query);
@@ -575,7 +582,7 @@ class DatabaseController {
     className: string,
     query: any,
     update: any,
-    { acl, many, upsert }: FullQueryOptions = {},
+    { acl, many, upsert, addsField }: FullQueryOptions = {},
     skipSanitization: boolean = false,
     validateOnly: boolean = false,
     validSchemaController: SchemaController.SchemaController
@@ -608,6 +615,21 @@ class DatabaseController {
                 query,
                 aclGroup
               );
+
+              if (addsField) {
+                query = {
+                  $and: [
+                    query,
+                    this.addPointerPermissions(
+                      schemaController,
+                      className,
+                      'addField',
+                      query,
+                      aclGroup
+                    ),
+                  ],
+                };
+              }
             }
             if (!query) {
               return Promise.resolve();
@@ -984,7 +1006,8 @@ class DatabaseController {
     schema: SchemaController.SchemaController,
     className: string,
     object: any,
-    aclGroup: string[]
+    aclGroup: string[],
+    runOptions: QueryOptions
   ): Promise<void> {
     const classSchema = schema.schemaData[className];
     if (!classSchema) {
@@ -1004,7 +1027,11 @@ class DatabaseController {
       return schemaFields.indexOf(field) < 0;
     });
     if (newKeys.length > 0) {
-      return schema.validatePermission(className, aclGroup, 'addField');
+      // adds a marker that new field is being adding during update
+      runOptions.addsField = true;
+
+      const action = runOptions.action;
+      return schema.validatePermission(className, aclGroup, 'addField', action);
     }
     return Promise.resolve();
   }
@@ -1262,6 +1289,7 @@ class DatabaseController {
   //   acl     restrict this operation with an ACL for the provided array
   //           of user objectIds and roles. acl: null means no user.
   //           when this field is not present, don't do anything regarding ACLs.
+  //  caseInsensitive make string comparisons case insensitive
   // TODO: make userIds not needed here. The db adapter shouldn't know
   // anything about users, ideally. Then, improve the format of the ACL
   // arg to work like the others.
@@ -1280,6 +1308,7 @@ class DatabaseController {
       pipeline,
       readPreference,
       hint,
+      caseInsensitive = false,
       explain,
     }: any = {},
     auth: any = {},
@@ -1331,6 +1360,7 @@ class DatabaseController {
               keys,
               readPreference,
               hint,
+              caseInsensitive,
               explain,
             };
             Object.keys(sort).forEach(fieldName => {
@@ -1515,28 +1545,50 @@ class DatabaseController {
       });
   }
 
+  // Constraints query using CLP's pointer permissions (PP) if any.
+  // 1. Etract the user id from caller's ACLgroup;
+  // 2. Exctract a list of field names that are PP for target collection and operation;
+  // 3. Constraint the original query so that each PP field must
+  // point to caller's id (or contain it in case of PP field being an array)
   addPointerPermissions(
     schema: SchemaController.SchemaController,
     className: string,
     operation: string,
     query: any,
     aclGroup: any[] = []
-  ) {
+  ): any {
     // Check if class has public permission for operation
     // If the BaseCLP pass, let go through
     if (schema.testPermissionsForClassName(className, aclGroup, operation)) {
       return query;
     }
     const perms = schema.getClassLevelPermissions(className);
-    const field =
-      ['get', 'find'].indexOf(operation) > -1
-        ? 'readUserFields'
-        : 'writeUserFields';
+
     const userACL = aclGroup.filter(acl => {
       return acl.indexOf('role:') != 0 && acl != '*';
     });
+
+    const groupKey =
+      ['get', 'find', 'count'].indexOf(operation) > -1
+        ? 'readUserFields'
+        : 'writeUserFields';
+
+    const permFields = [];
+
+    if (perms[operation] && perms[operation].pointerFields) {
+      permFields.push(...perms[operation].pointerFields);
+    }
+
+    if (perms[groupKey]) {
+      for (const field of perms[groupKey]) {
+        if (!permFields.includes(field)) {
+          permFields.push(field);
+        }
+      }
+    }
     // the ACL should have exactly 1 user
-    if (perms && perms[field] && perms[field].length > 0) {
+    if (permFields.length > 0) {
+      // the ACL should have exactly 1 user
       // No user set return undefined
       // If the length is > 1, that means we didn't de-dupe users correctly
       if (userACL.length != 1) {
@@ -1549,7 +1601,6 @@ class DatabaseController {
         objectId: userId,
       };
 
-      const permFields = perms[field];
       const ors = permFields.flatMap(key => {
         // constraint for single pointer setup
         const q = {
@@ -1578,7 +1629,7 @@ class DatabaseController {
     query: any = {},
     aclGroup: any[] = [],
     auth: any = {}
-  ) {
+  ): null | string[] {
     const perms = schema.getClassLevelPermissions(className);
     if (!perms) return null;
 
@@ -1665,6 +1716,24 @@ class DatabaseController {
         throw error;
       });
 
+    const usernameCaseInsensitiveIndex = userClassPromise
+      .then(() =>
+        this.adapter.ensureIndex(
+          '_User',
+          requiredUserFields,
+          ['username'],
+          'case_insensitive_username',
+          true
+        )
+      )
+      .catch(error => {
+        logger.warn(
+          'Unable to create case insensitive username index: ',
+          error
+        );
+        throw error;
+      });
+
     const emailUniqueness = userClassPromise
       .then(() =>
         this.adapter.ensureUniqueness('_User', requiredUserFields, ['email'])
@@ -1674,6 +1743,21 @@ class DatabaseController {
           'Unable to ensure uniqueness for user email addresses: ',
           error
         );
+        throw error;
+      });
+
+    const emailCaseInsensitiveIndex = userClassPromise
+      .then(() =>
+        this.adapter.ensureIndex(
+          '_User',
+          requiredUserFields,
+          ['email'],
+          'case_insensitive_email',
+          true
+        )
+      )
+      .catch(error => {
+        logger.warn('Unable to create case insensitive email index: ', error);
         throw error;
       });
 
@@ -1694,7 +1778,9 @@ class DatabaseController {
     });
     return Promise.all([
       usernameUniqueness,
+      usernameCaseInsensitiveIndex,
       emailUniqueness,
+      emailCaseInsensitiveIndex,
       roleUniqueness,
       adapterInit,
       indexPromise,
