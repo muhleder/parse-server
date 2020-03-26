@@ -47,7 +47,7 @@ const getKeyAndAlgoFromToken = token => {
   return { keyId, algo };
 };
 
-const verifyIdToken = async ({ token, id }, clientID) => {
+const verifyIdToken = async ({ token, id }) => {
   if (!token) {
     throw new Parse.Error(
       Parse.Error.OBJECT_NOT_FOUND,
@@ -73,18 +73,12 @@ const verifyIdToken = async ({ token, id }, clientID) => {
       `auth data is invalid for this user.`
     );
   }
-  if (clientID !== undefined && jwtClaims.aud !== clientID) {
-    throw new Parse.Error(
-      Parse.Error.OBJECT_NOT_FOUND,
-      `jwt aud parameter does not include this client - is: ${jwtClaims.aud} | expected: ${clientID}`
-    );
-  }
   return jwtClaims;
 };
 
 // Returns a promise that fulfills if this id token is valid
-function validateAuthData(authData, options = {}) {
-  return verifyIdToken(authData, options.client_id);
+function validateAuthData(authData) {
+  return verifyIdToken(authData);
 }
 
 // Returns a promise that fulfills if this app id is valid.
