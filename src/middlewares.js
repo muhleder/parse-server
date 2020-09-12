@@ -322,6 +322,7 @@ export function handleParseErrors(err, req, res, next) {
   const log = (req.config && req.config.loggerController) || defaultLogger;
   if (err instanceof Parse.Error) {
     let httpStatus;
+    let maybeStatus;
     // TODO: fill out this mapping
     switch (err.code) {
       case Parse.Error.INTERNAL_SERVER_ERROR:
@@ -329,6 +330,14 @@ export function handleParseErrors(err, req, res, next) {
         break;
       case Parse.Error.OBJECT_NOT_FOUND:
         httpStatus = 404;
+        break;
+      case Parse.Error.SCRIPT_FAILED:
+        maybeStatus = parseInt(err.message);
+        if (maybeStatus > 0) {
+          httpStatus = maybeStatus;
+        } else {
+          httpStatus = 400;
+        }
         break;
       default:
         httpStatus = 400;
