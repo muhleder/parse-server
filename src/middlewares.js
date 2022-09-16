@@ -380,6 +380,14 @@ export function handleParseErrors(err, req, res, next) {
       case Parse.Error.OBJECT_NOT_FOUND:
         httpStatus = 404;
         break;
+      case Parse.Error.SCRIPT_FAILED:
+        let maybeStatus = parseInt(err.message);
+        if (maybeStatus > 0) {
+          httpStatus = maybeStatus;
+        } else {
+          httpStatus = 400;
+        }
+        break;
       default:
         httpStatus = 400;
     }
