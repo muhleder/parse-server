@@ -1766,7 +1766,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     transactionalSession: ?any
   ) {
     debug('upsertOneObject');
-    const createValue = Object.assign({}, query, update);
+    const createValue = Object.assign({}, {objectId: query.objectId}, update);
     return this.createObject(className, schema, createValue, transactionalSession).catch(error => {
       // ignore duplicate value errors as it's upsert
       if (error.code !== Parse.Error.DUPLICATE_VALUE) {
