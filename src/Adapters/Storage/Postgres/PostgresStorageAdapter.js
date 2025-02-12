@@ -1291,7 +1291,8 @@ export class PostgresStorageAdapter implements StorageAdapter {
     className: string,
     schema: SchemaType,
     object: any,
-    transactionalSession: ?any
+    transactionalSession: ?any,
+    upsert: ?boolean
   ) {
     debug('createObject');
     let columnsArray = [];
@@ -1412,8 +1413,26 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const columnsPattern = columnsArray.map((col, index) => `$${index + 2}:name`).join();
     const valuesPattern = initialValues.concat(geoPointsInjects).join();
 
-    const qs = `INSERT INTO $1:name (${columnsPattern}) VALUES (${valuesPattern})`;
+    let qs = `INSERT INTO $1:name (${columnsPattern}) VALUES (${valuesPattern})`;
     const values = [className, ...columnsArray, ...valuesArray];
+
+    if (upsert) {
+      const update = { ...object };
+      delete update.objectId;
+      try {
+        var { updatePatterns, values: updateValues } = this.getUpdatePatterns(
+          schema,
+          update,
+          [],
+          values.length + 1
+        );
+        qs += ` ON CONFLICT ("objectId") DO UPDATE SET ${updatePatterns.join()}`;
+        values.push(...updateValues);
+      } catch (err) {
+        // noop for the moment, just try the insert.
+      }
+    }
+
     const promise = (transactionalSession ? transactionalSession.t : this._client)
       .none(qs, values)
       .then(() => ({ ops: [object] }))
@@ -1782,13 +1801,15 @@ export class PostgresStorageAdapter implements StorageAdapter {
   ) {
     debug('upsertOneObject');
     const createValue = Object.assign({}, { objectId: query.objectId }, update);
-    return this.createObject(className, schema, createValue, transactionalSession).catch(error => {
-      // ignore duplicate value errors as it's upsert
-      if (error.code !== Parse.Error.DUPLICATE_VALUE) {
-        throw error;
+    return this.createObject(className, schema, createValue, transactionalSession, true).catch(
+      error => {
+        // ignore duplicate value errors as it's upsert
+        if (error.code !== Parse.Error.DUPLICATE_VALUE) {
+          throw error;
+        }
+        return this.findOneAndUpdate(className, schema, query, update, transactionalSession);
       }
-      return this.findOneAndUpdate(className, schema, query, update, transactionalSession);
-    });
+    );
   }
 
   find(
