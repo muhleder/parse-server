@@ -8,7 +8,7 @@ import _ from 'lodash';
 import { v4 as uuidv4 } from 'uuid';
 import sql from './sql';
 import { StorageAdapter } from '../StorageAdapter';
-import type { SchemaType, QueryType, QueryOptions } from '../StorageAdapter';
+import type { SchemaType, QueryType, QueryOptions, UpdatePatternData } from '../StorageAdapter';
 const Utils = require('../../../Utils');
 
 const PostgresRelationDoesNotExistError = '42P01';
@@ -1506,10 +1506,41 @@ export class PostgresStorageAdapter implements StorageAdapter {
     transactionalSession: ?any
   ): Promise<[any]> {
     debug('updateObjectsByQuery');
-    const updatePatterns = [];
-    const values = [className];
-    let index = 2;
     schema = toPostgresSchema(schema);
+
+    let updatePatternsData;
+    try {
+      updatePatternsData = this.getUpdatePatterns(schema, update, [className], 2);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    var { updatePatterns, index, values } = updatePatternsData;
+
+    const where = buildWhereClause({
+      schema,
+      index,
+      query,
+      caseInsensitive: false,
+    });
+    values.push(...where.values);
+
+    const whereClause = where.pattern.length > 0 ? `WHERE ${where.pattern}` : '';
+    const qs = `UPDATE $1:name SET ${updatePatterns.join()} ${whereClause} RETURNING *`;
+    const promise = (transactionalSession ? transactionalSession.t : this._client).any(qs, values);
+    if (transactionalSession) {
+      transactionalSession.batch.push(promise);
+    }
+    return promise;
+  }
+
+  getUpdatePatterns(
+    schema: SchemaType,
+    update: any,
+    values: any[],
+    index: number
+  ): UpdatePatternData {
+    const updatePatterns = [];
 
     const originalUpdate = { ...update };
 
@@ -1731,30 +1762,14 @@ export class PostgresStorageAdapter implements StorageAdapter {
         }
       } else {
         debug('Not supported update', { fieldName, fieldValue });
-        return Promise.reject(
-          new Parse.Error(
-            Parse.Error.OPERATION_FORBIDDEN,
-            `Postgres doesn't support update ${JSON.stringify(fieldValue)} yet`
-          )
+        throw new Parse.Error(
+          Parse.Error.OPERATION_FORBIDDEN,
+          `Postgres doesn't support update ${JSON.stringify(fieldValue)} yet`
         );
       }
     }
 
-    const where = buildWhereClause({
-      schema,
-      index,
-      query,
-      caseInsensitive: false,
-    });
-    values.push(...where.values);
-
-    const whereClause = where.pattern.length > 0 ? `WHERE ${where.pattern}` : '';
-    const qs = `UPDATE $1:name SET ${updatePatterns.join()} ${whereClause} RETURNING *`;
-    const promise = (transactionalSession ? transactionalSession.t : this._client).any(qs, values);
-    if (transactionalSession) {
-      transactionalSession.batch.push(promise);
-    }
-    return promise;
+    return { updatePatterns, index, values };
   }
 
   // Hopefully, we can get rid of this. It's only used for config and hooks.
@@ -1766,7 +1781,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     transactionalSession: ?any
   ) {
     debug('upsertOneObject');
-    const createValue = Object.assign({}, {objectId: query.objectId}, update);
+    const createValue = Object.assign({}, { objectId: query.objectId }, update);
     return this.createObject(className, schema, createValue, transactionalSession).catch(error => {
       // ignore duplicate value errors as it's upsert
       if (error.code !== Parse.Error.DUPLICATE_VALUE) {

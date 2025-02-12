@@ -26,6 +26,12 @@ export type UpdateQueryOptions = {
   upsert?: boolean,
 };
 
+export type UpdatePatternData = {
+  updatePatterns: any[],
+  index: number,
+  values: any[],
+};
+
 export type FullQueryOptions = QueryOptions & UpdateQueryOptions;
 
 export interface StorageAdapter {
