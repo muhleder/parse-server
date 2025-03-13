@@ -1601,7 +1601,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
         // This recursively sets the json_object
         // Only 1 level deep
         const generate = (jsonb: string, key: string, value: any) => {
-          return `json_object_set_key(COALESCE(${jsonb}, '{}'::jsonb), ${key}, ${value})::jsonb`;
+          return `json_object_set_key(COALESCE("_User".${jsonb}, '{}'::jsonb), ${key}, ${value})::jsonb`;
         };
         const lastKey = `$${index}:name`;
         const fieldNameIndex = index;
