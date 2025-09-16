@@ -1352,7 +1352,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
       switch (schema.fields[fieldName].type) {
         case 'Date':
           if (object[fieldName]) {
-            valuesArray.push(object[fieldName].iso);
+            if (object[fieldName].iso) {
+              valuesArray.push(object[fieldName].iso);
+            } else {
+              valuesArray.push(object[fieldName]);
+            }
           } else {
             valuesArray.push(null);
           }
